@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from lane_drill.episodes import Episode
+from lane_drill.errors import InsufficientDataError
 
 
 def base_rate(departures: pd.Series) -> float:
@@ -75,3 +76,99 @@ def replay_once(
         day += 1
 
     return delays
+
+
+def _metrics(
+    transits: np.ndarray,
+    delays: np.ndarray,
+    promises: np.ndarray,
+    departures: pd.Series,
+    episode_end_day: float,
+    start: pd.Timestamp,
+    service_level: float,
+) -> dict:
+    disrupted = transits + delays
+    arrival_days = ((departures - start) // pd.Timedelta(days=1)).to_numpy() + disrupted
+    delayed = delays > 0
+    last_late_day = float(arrival_days[delayed].max()) if delayed.any() else episode_end_day
+    return {
+        "p50": float(np.quantile(disrupted, 0.50)),
+        "p80": float(np.quantile(disrupted, 0.80)),
+        "p90": float(np.quantile(disrupted, 0.90)),
+        "promise_miss": float((disrupted > promises).mean()),
+        "pct_delayed": float(delayed.mean()),
+        "max_delay": int(delays.max()),
+        "days_to_clear": max(int(round(last_late_day - episode_end_day)), 0),
+    }
+
+
+def drill(
+    frame: pd.DataFrame,
+    episode: Episode,
+    n_replays: int = 1000,
+    seed: int = 2026,
+    service_level: float = 0.8,
+    min_shipments: int = 30,
+) -> dict:
+    if len(frame) < min_shipments:
+        raise InsufficientDataError(
+            f"{len(frame)} completed shipments is below the minimum of "
+            f"{min_shipments}; a drill on this little history would not be "
+            "trustworthy. Lower it with --min-shipments if you accept that."
+        )
+
+    departures = frame["departure"].reset_index(drop=True)
+    transits = frame["transit_days"].to_numpy()
+    if "carrier_eta" in frame.columns and frame["carrier_eta"].notna().all():
+        promises = (
+            (frame["carrier_eta"] - frame["departure"]) // pd.Timedelta(days=1)
+        ).to_numpy(dtype=float)
+    else:
+        promises = np.full(len(frame), np.ceil(np.quantile(transits, service_level)))
+
+    baseline = {
+        "p50": float(np.quantile(transits, 0.50)),
+        "p80": float(np.quantile(transits, 0.80)),
+        "p90": float(np.quantile(transits, 0.90)),
+        "promise_miss": float((transits > promises).mean()),
+    }
+
+    rate = base_rate(departures)
+    profile_days = len(episode.profile)
+    episode_end_day = float(episode.duration_days - 1)
+
+    span_start = departures.min()
+    span_days = max((departures.max() - span_start).days - profile_days, 1)
+    rng = np.random.default_rng(seed)
+    starts = [span_start + pd.Timedelta(days=int(offset))
+              for offset in rng.integers(0, span_days, size=n_replays)]
+
+    replays = []
+    for start in starts:
+        delays = replay_once(departures, episode, start, rate)
+        replays.append((start, delays,
+                        _metrics(transits, delays, promises, departures,
+                                 episode_end_day, start, service_level)))
+
+    key = f"p{int(service_level * 100)}"
+    ordered = sorted(replays, key=lambda item: item[2].get(key, item[2]["p80"]))
+    median_start, median_delays, median_metrics = ordered[len(ordered) // 2]
+    _, _, worst_metrics = ordered[int(len(ordered) * 0.9)]
+
+    return {
+        "baseline": baseline,
+        "median": median_metrics,
+        "worst_decile": worst_metrics,
+        "median_replay": {"start": median_start, "delays": median_delays},
+        "n_replays": n_replays,
+        "seed": seed,
+        "service_level": service_level,
+        "episode": {
+            "chokepoint": episode.chokepoint,
+            "start": str(episode.start.date()),
+            "end": str(episode.end.date()),
+            "depth": episode.depth,
+            "duration_days": episode.duration_days,
+            "surge": episode.surge,
+        },
+    }
