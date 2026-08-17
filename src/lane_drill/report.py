@@ -78,8 +78,9 @@ def render(frame: pd.DataFrame, episode: Episode, result: dict,
     console.print(
         f"\nIn the median replay, {median['pct_delayed']:.0%} of the struck "
         f"quarter's shipments are delayed (worst single delay "
-        f"{median['max_delay']} days) and the backlog takes "
-        f"[bold]{median['days_to_clear']} days beyond the reopening[/bold] to clear."
+        f"{median['max_delay']} days), and the last disruption-delayed shipment "
+        f"lands [bold]{median['days_to_clear']} days after the waterway "
+        f"reopened[/bold]."
     )
 
     if timeline:
