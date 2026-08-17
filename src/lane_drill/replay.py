@@ -78,6 +78,9 @@ def replay_once(
     return delays
 
 
+DRILL_WINDOW_DAYS = 91  # the drill scores the quarter that starts when the episode does
+
+
 def _metrics(
     transits: np.ndarray,
     delays: np.ndarray,
@@ -86,19 +89,25 @@ def _metrics(
     episode_end_day: float,
     start: pd.Timestamp,
     service_level: float,
-) -> dict:
-    disrupted = transits + delays
-    arrival_days = ((departures - start) // pd.Timedelta(days=1)).to_numpy() + disrupted
-    delayed = delays > 0
+) -> dict | None:
+    day_offsets = ((departures - start) // pd.Timedelta(days=1)).to_numpy()
+    window = (day_offsets >= 0) & (day_offsets < DRILL_WINDOW_DAYS)
+    if window.sum() < 10:
+        return None
+
+    disrupted = (transits + delays)[window]
+    delayed = delays[window] > 0
+    arrival_days = day_offsets[window] + disrupted
     last_late_day = float(arrival_days[delayed].max()) if delayed.any() else episode_end_day
     return {
         "p50": float(np.quantile(disrupted, 0.50)),
         "p80": float(np.quantile(disrupted, 0.80)),
         "p90": float(np.quantile(disrupted, 0.90)),
-        "promise_miss": float((disrupted > promises).mean()),
+        "promise_miss": float((disrupted > promises[window]).mean()),
         "pct_delayed": float(delayed.mean()),
-        "max_delay": int(delays.max()),
+        "max_delay": int(delays[window].max()),
         "days_to_clear": max(int(round(last_late_day - episode_end_day)), 0),
+        "n_window": int(window.sum()),
     }
 
 
@@ -146,9 +155,15 @@ def drill(
     replays = []
     for start in starts:
         delays = replay_once(departures, episode, start, rate)
-        replays.append((start, delays,
-                        _metrics(transits, delays, promises, departures,
-                                 episode_end_day, start, service_level)))
+        metrics = _metrics(transits, delays, promises, departures,
+                           episode_end_day, start, service_level)
+        if metrics is not None:
+            replays.append((start, delays, metrics))
+    if not replays:
+        raise InsufficientDataError(
+            "no replay window contained at least 10 shipments; "
+            "the lane is too sparse for a drill."
+        )
 
     key = f"p{int(service_level * 100)}"
     ordered = sorted(replays, key=lambda item: item[2].get(key, item[2]["p80"]))
