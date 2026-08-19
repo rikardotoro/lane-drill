@@ -109,6 +109,15 @@ def chart_atlas(mode):
         for name, ep in famous.items():
             if ep.chokepoint == slug:
                 mid = ep.start + (ep.end - ep.start) / 2
+                # a soft band over the episode's span, padded to a visible
+                # minimum so a 7-day blockage doesn't vanish on a 6-year axis
+                x_a, x_b = X(ep.start), X(ep.end)
+                if x_b - x_a < 7:
+                    pad = (7 - (x_b - x_a)) / 2
+                    x_a, x_b = x_a - pad, x_b + pad
+                body.append(f'<rect x="{x_a:.1f}" y="{y1 + 13:.1f}" '
+                            f'width="{x_b - x_a:.1f}" height="{y0 - y1 - 13:.1f}" '
+                            f'fill="{t["disrupt"]}" fill-opacity="0.2"/>')
                 body.append(_text(X(mid), y1 + 8, FAMOUS[name], 11, t["disrupt"],
                                   anchor="middle", weight="600"))
 
