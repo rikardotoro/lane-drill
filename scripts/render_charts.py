@@ -70,7 +70,11 @@ def chart_atlas(mode):
     chokepoints = ("suez", "bab_el_mandeb", "panama")
     titles = {"suez": "Suez Canal", "bab_el_mandeb": "Bab el-Mandeb Strait",
               "panama": "Panama Canal"}
-    famous = {name: resolve_episode(name, EXAMPLES) for name in FAMOUS}
+    labelled = {FAMOUS[name]: resolve_episode(name, EXAMPLES) for name in FAMOUS}
+    # the Red Sea crisis also collapsed Suez transits (ships reroute around
+    # Africa before ever reaching the canal) -- label it so nobody mistakes
+    # that big 2023-24 dip for the Ever Given
+    labelled["Red Sea reroute"] = resolve_episode("suez:2023-12", EXAMPLES)
 
     W, panel_h, top, bottom = 760, 118, 64, 34
     H = top + panel_h * 3 + bottom
@@ -106,7 +110,7 @@ def chart_atlas(mode):
         body.append(_path([(X(day), Y(v)) for day, v in factors.items()], t["normal"], 1.4))
         body.append(_line(x0, y0, x1, y0, t["axis"], 1.0))
 
-        for name, ep in famous.items():
+        for display, ep in labelled.items():
             if ep.chokepoint == slug:
                 mid = ep.start + (ep.end - ep.start) / 2
                 # a soft band over the episode's span, padded to a visible
@@ -118,7 +122,7 @@ def chart_atlas(mode):
                 body.append(f'<rect x="{x_a:.1f}" y="{y1 + 13:.1f}" '
                             f'width="{x_b - x_a:.1f}" height="{y0 - y1 - 13:.1f}" '
                             f'fill="{t["disrupt"]}" fill-opacity="0.2"/>')
-                body.append(_text(X(mid), y1 + 8, FAMOUS[name], 11, t["disrupt"],
+                body.append(_text(X(mid), y1 + 8, display, 11, t["disrupt"],
                                   anchor="middle", weight="600"))
 
         if row == 2:
